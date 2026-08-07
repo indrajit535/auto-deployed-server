@@ -1,11 +1,13 @@
 {
-    "name": "server",
+    "name": "key-manager-server",
     "version": "1.0.0",
+    "description": "Server with Admin Panel for key generation and User Panel for key verification",
     "main": "index.js",
     "scripts": {
         "start": "node index.js"
     },
     "dependencies": {
-        "express": "^4.18.2"
+        "express": "^4.18.2",
+        "cors": "^2.8.5"
     }
 }
