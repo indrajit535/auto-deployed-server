@@ -1,8 +1,6 @@
 const express = require('express');
 const cors = require('cors');
 const crypto = require('crypto');
-const fs = require('fs');
-const path = require('path');
 
 const app = express();
 const port = process.env.PORT || 3000;
@@ -10,43 +8,35 @@ const port = process.env.PORT || 3000;
 // Middleware
 app.use(cors());
 app.use(express.json());
-app.use(express.static('public'));
 
-// Data file path
-const DATA_FILE = path.join(__dirname, 'data.json');
-
-// Initialize data file if not exists
-if (!fs.existsSync(DATA_FILE)) {
-    fs.writeFileSync(DATA_FILE, JSON.stringify({ keys: [], users: [] }, null, 2));
-}
-
-// Read data from file
-function readData() {
-    try {
-        const data = fs.readFileSync(DATA_FILE, 'utf8');
-        return JSON.parse(data);
-    } catch (error) {
-        return { keys: [], users: [] };
-    }
-}
-
-// Write data to file
-function writeData(data) {
-    fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
-}
+// ==================== IN-MEMORY DATABASE ====================
+// Data store in memory (resets on server restart)
+let database = {
+    keys: [],
+    users: [],
+    adminSessions: []
+};
 
 // ==================== ADMIN PANEL APIs ====================
 
-// 1. Admin Login (Simple - you can add more security)
+// 1. Admin Login
 app.post('/api/admin/login', (req, res) => {
     const { username, password } = req.body;
     
-    // Default admin credentials (change this!)
+    // Default admin credentials
     if (username === 'admin' && password === 'admin123') {
+        const token = 'admin_' + crypto.randomBytes(16).toString('hex');
+        
+        // Save session
+        database.adminSessions.push({
+            token: token,
+            created: new Date().toISOString()
+        });
+        
         res.json({
             success: true,
             message: 'Admin login successful',
-            token: 'admin_' + crypto.randomBytes(16).toString('hex')
+            token: token
         });
     } else {
         res.status(401).json({
@@ -56,12 +46,13 @@ app.post('/api/admin/login', (req, res) => {
     }
 });
 
-// 2. Generate New Key (Admin only)
+// 2. Generate New Key
 app.post('/api/admin/generate-key', (req, res) => {
     const { adminToken, keyName, expiryDays } = req.body;
     
     // Verify admin token
-    if (!adminToken || !adminToken.startsWith('admin_')) {
+    const session = database.adminSessions.find(s => s.token === adminToken);
+    if (!session) {
         return res.status(401).json({
             success: false,
             message: 'Unauthorized - Invalid admin token'
@@ -69,7 +60,7 @@ app.post('/api/admin/generate-key', (req, res) => {
     }
     
     // Generate unique key
-    const key = 'KEY_' + crypto.randomBytes(16).toString('hex').toUpperCase();
+    const key = 'KEY_' + crypto.randomBytes(12).toString('hex').toUpperCase();
     const expiryDate = new Date();
     expiryDate.setDate(expiryDate.getDate() + (parseInt(expiryDays) || 30));
     
@@ -84,10 +75,7 @@ app.post('/api/admin/generate-key', (req, res) => {
         createdBy: 'admin'
     };
     
-    // Save key
-    const data = readData();
-    data.keys.push(newKey);
-    writeData(data);
+    database.keys.push(newKey);
     
     res.json({
         success: true,
@@ -96,39 +84,39 @@ app.post('/api/admin/generate-key', (req, res) => {
     });
 });
 
-// 3. Get All Keys (Admin only)
+// 3. Get All Keys
 app.get('/api/admin/keys', (req, res) => {
     const { adminToken } = req.query;
     
-    if (!adminToken || !adminToken.startsWith('admin_')) {
+    const session = database.adminSessions.find(s => s.token === adminToken);
+    if (!session) {
         return res.status(401).json({
             success: false,
             message: 'Unauthorized'
         });
     }
     
-    const data = readData();
     res.json({
         success: true,
-        keys: data.keys
+        keys: database.keys,
+        total: database.keys.length
     });
 });
 
-// 4. Delete Key (Admin only)
+// 4. Delete Key
 app.delete('/api/admin/delete-key/:key', (req, res) => {
     const { adminToken } = req.query;
     const { key } = req.params;
     
-    if (!adminToken || !adminToken.startsWith('admin_')) {
+    const session = database.adminSessions.find(s => s.token === adminToken);
+    if (!session) {
         return res.status(401).json({
             success: false,
             message: 'Unauthorized'
         });
     }
     
-    const data = readData();
-    data.keys = data.keys.filter(k => k.key !== key);
-    writeData(data);
+    database.keys = database.keys.filter(k => k.key !== key);
     
     res.json({
         success: true,
@@ -136,23 +124,22 @@ app.delete('/api/admin/delete-key/:key', (req, res) => {
     });
 });
 
-// 5. Toggle Key Status (Admin only)
+// 5. Toggle Key Status
 app.put('/api/admin/toggle-key/:key', (req, res) => {
     const { adminToken } = req.query;
     const { key } = req.params;
     
-    if (!adminToken || !adminToken.startsWith('admin_')) {
+    const session = database.adminSessions.find(s => s.token === adminToken);
+    if (!session) {
         return res.status(401).json({
             success: false,
             message: 'Unauthorized'
         });
     }
     
-    const data = readData();
-    const keyData = data.keys.find(k => k.key === key);
+    const keyData = database.keys.find(k => k.key === key);
     if (keyData) {
         keyData.isActive = !keyData.isActive;
-        writeData(data);
         res.json({
             success: true,
             message: 'Key status toggled',
@@ -166,9 +153,28 @@ app.put('/api/admin/toggle-key/:key', (req, res) => {
     }
 });
 
+// 6. Get All Users
+app.get('/api/admin/users', (req, res) => {
+    const { adminToken } = req.query;
+    
+    const session = database.adminSessions.find(s => s.token === adminToken);
+    if (!session) {
+        return res.status(401).json({
+            success: false,
+            message: 'Unauthorized'
+        });
+    }
+    
+    res.json({
+        success: true,
+        users: database.users,
+        total: database.users.length
+    });
+});
+
 // ==================== USER PANEL APIs ====================
 
-// 1. Verify Key (User)
+// 1. Verify Key
 app.post('/api/user/verify', (req, res) => {
     const { key } = req.body;
     
@@ -179,8 +185,7 @@ app.post('/api/user/verify', (req, res) => {
         });
     }
     
-    const data = readData();
-    const keyData = data.keys.find(k => k.key === key);
+    const keyData = database.keys.find(k => k.key === key);
     
     if (!keyData) {
         return res.status(404).json({
@@ -217,10 +222,6 @@ app.post('/api/user/verify', (req, res) => {
         });
     }
     
-    // Update usage count
-    keyData.usageCount++;
-    writeData(data);
-    
     res.json({
         success: true,
         message: 'Key verified successfully',
@@ -229,38 +230,13 @@ app.post('/api/user/verify', (req, res) => {
             created: keyData.created,
             expiry: keyData.expiry,
             usageCount: keyData.usageCount,
-            maxUsage: keyData.maxUsage
+            maxUsage: keyData.maxUsage,
+            isActive: keyData.isActive
         }
     });
 });
 
-// 2. Get Key Status (User)
-app.get('/api/user/key-status/:key', (req, res) => {
-    const { key } = req.params;
-    
-    const data = readData();
-    const keyData = data.keys.find(k => k.key === key);
-    
-    if (!keyData) {
-        return res.status(404).json({
-            success: false,
-            message: 'Key not found'
-        });
-    }
-    
-    res.json({
-        success: true,
-        keyDetails: {
-            name: keyData.name,
-            isActive: keyData.isActive,
-            expiry: keyData.expiry,
-            usageCount: keyData.usageCount,
-            maxUsage: keyData.maxUsage
-        }
-    });
-});
-
-// 3. User Login (with key)
+// 2. User Login with Key
 app.post('/api/user/login', (req, res) => {
     const { key, username } = req.body;
     
@@ -271,9 +247,7 @@ app.post('/api/user/login', (req, res) => {
         });
     }
     
-    // Verify key first
-    const data = readData();
-    const keyData = data.keys.find(k => k.key === key);
+    const keyData = database.keys.find(k => k.key === key);
     
     if (!keyData || !keyData.isActive) {
         return res.status(401).json({
@@ -282,11 +256,27 @@ app.post('/api/user/login', (req, res) => {
         });
     }
     
-    // Check if user already exists
-    let user = data.users.find(u => u.key === key);
+    // Check expiry
+    const expiryDate = new Date(keyData.expiry);
+    if (new Date() > expiryDate) {
+        return res.status(403).json({
+            success: false,
+            message: 'Key has expired'
+        });
+    }
+    
+    // Check max usage
+    if (keyData.usageCount >= keyData.maxUsage) {
+        return res.status(403).json({
+            success: false,
+            message: 'Key usage limit exceeded'
+        });
+    }
+    
+    // Find or create user
+    let user = database.users.find(u => u.key === key);
     
     if (!user) {
-        // Create new user
         user = {
             id: 'USER_' + crypto.randomBytes(8).toString('hex').toUpperCase(),
             username: username || 'User',
@@ -295,14 +285,13 @@ app.post('/api/user/login', (req, res) => {
             lastLogin: null,
             created: new Date().toISOString()
         };
-        data.users.push(user);
+        database.users.push(user);
     }
     
     // Update login count
     user.loginCount++;
     user.lastLogin = new Date().toISOString();
     keyData.usageCount++;
-    writeData(data);
     
     res.json({
         success: true,
@@ -323,62 +312,135 @@ app.post('/api/user/login', (req, res) => {
     });
 });
 
-// 4. Get All Users (Admin only)
-app.get('/api/admin/users', (req, res) => {
-    const { adminToken } = req.query;
+// 3. Get Key Status
+app.get('/api/user/key-status/:key', (req, res) => {
+    const { key } = req.params;
     
-    if (!adminToken || !adminToken.startsWith('admin_')) {
-        return res.status(401).json({
+    const keyData = database.keys.find(k => k.key === key);
+    
+    if (!keyData) {
+        return res.status(404).json({
             success: false,
-            message: 'Unauthorized'
+            message: 'Key not found'
         });
     }
     
-    const data = readData();
     res.json({
         success: true,
-        users: data.users
+        keyDetails: {
+            name: keyData.name,
+            isActive: keyData.isActive,
+            expiry: keyData.expiry,
+            usageCount: keyData.usageCount,
+            maxUsage: keyData.maxUsage
+        }
     });
 });
 
-// ==================== PUBLIC ROUTE ====================
+// ==================== TEST ROUTES ====================
+
+// Get all keys (public - for testing)
+app.get('/api/keys', (req, res) => {
+    res.json({
+        total: database.keys.length,
+        keys: database.keys.map(k => ({
+            key: k.key,
+            name: k.name,
+            isActive: k.isActive,
+            expiry: k.expiry
+        }))
+    });
+});
+
+// Get system status
+app.get('/api/status', (req, res) => {
+    res.json({
+        status: 'online',
+        keysCount: database.keys.length,
+        usersCount: database.users.length,
+        uptime: process.uptime(),
+        timestamp: new Date().toISOString()
+    });
+});
+
+// ==================== HOME PAGE ====================
 
 app.get('/', (req, res) => {
     res.send(`
         <!DOCTYPE html>
         <html>
         <head>
-            <title>Server Key Manager</title>
+            <title>🔑 Key Manager Server</title>
+            <meta name="viewport" content="width=device-width, initial-scale=1">
             <style>
-                body { font-family: Arial; max-width: 800px; margin: 50px auto; padding: 20px; }
-                .box { border: 1px solid #ddd; padding: 20px; margin: 20px 0; border-radius: 8px; }
-                h2 { color: #2196F3; }
-                input { padding: 8px; width: 300px; margin: 5px 0; }
-                button { padding: 10px 20px; background: #2196F3; color: white; border: none; border-radius: 4px; cursor: pointer; }
-                .success { color: green; }
-                .error { color: red; }
-                pre { background: #f5f5f5; padding: 10px; border-radius: 4px; }
+                * { box-sizing: border-box; }
+                body { font-family: 'Segoe UI', Arial, sans-serif; max-width: 900px; margin: 30px auto; padding: 20px; background: #f0f2f5; }
+                .header { text-align: center; padding: 20px; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; border-radius: 12px; margin-bottom: 30px; }
+                .header h1 { margin: 0; font-size: 32px; }
+                .header p { margin: 10px 0 0; opacity: 0.9; }
+                .box { background: white; padding: 25px; margin: 20px 0; border-radius: 12px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+                .box h2 { color: #333; margin-top: 0; border-bottom: 2px solid #667eea; padding-bottom: 10px; }
+                .box.admin h2 { border-color: #f093fb; }
+                input { padding: 10px 15px; width: 100%; max-width: 350px; border: 2px solid #ddd; border-radius: 8px; font-size: 14px; margin: 5px 0; }
+                button { padding: 10px 25px; background: #667eea; color: white; border: none; border-radius: 8px; cursor: pointer; font-size: 14px; transition: 0.3s; }
+                button:hover { transform: translateY(-2px); box-shadow: 0 4px 15px rgba(102,126,234,0.4); }
+                button.green { background: #28a745; }
+                button.green:hover { box-shadow: 0 4px 15px rgba(40,167,69,0.4); }
+                .result { margin-top: 15px; padding: 15px; background: #f8f9fa; border-radius: 8px; overflow-x: auto; }
+                .result pre { margin: 0; font-size: 13px; white-space: pre-wrap; word-wrap: break-word; }
+                .success { color: #28a745; }
+                .error { color: #dc3545; }
+                .status { display: inline-block; padding: 3px 10px; border-radius: 20px; font-size: 12px; }
+                .status.active { background: #d4edda; color: #155724; }
+                .status.inactive { background: #f8d7da; color: #721c24; }
+                .flex { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+                @media (max-width: 600px) { .flex { flex-direction: column; align-items: stretch; } input { max-width: 100%; } }
             </style>
         </head>
         <body>
-            <h1>🔑 Server Key Manager</h1>
-            
-            <div class="box">
-                <h2>🔐 Admin Panel</h2>
-                <input id="adminUser" placeholder="Username" value="admin"><br>
-                <input id="adminPass" placeholder="Password" value="admin123" type="password"><br>
-                <button onclick="adminLogin()">Login</button>
-                <div id="adminResult"></div>
+            <div class="header">
+                <h1>🔑 Key Manager Server</h1>
+                <p>Admin Panel • Key Generation • User Verification</p>
             </div>
             
+            <!-- Admin Panel -->
+            <div class="box admin">
+                <h2>🔐 Admin Panel</h2>
+                <div class="flex">
+                    <input id="adminUser" placeholder="Username" value="admin">
+                    <input id="adminPass" placeholder="Password" value="admin123" type="password">
+                    <button onclick="adminLogin()">Login</button>
+                </div>
+                <div id="adminResult" class="result"><pre>Login to get admin token...</pre></div>
+                
+                <hr style="margin: 20px 0;">
+                
+                <div class="flex">
+                    <input id="keyName" placeholder="Key Name" value="My Key">
+                    <input id="expiryDays" placeholder="Expiry Days" value="30" type="number">
+                    <button class="green" onclick="generateKey()">🔑 Generate Key</button>
+                </div>
+                <div id="genResult" class="result"><pre>Generate a new key...</pre></div>
+            </div>
+            
+            <!-- User Panel -->
             <div class="box">
                 <h2>👤 User Panel</h2>
-                <input id="userKey" placeholder="Enter your key"><br>
-                <button onclick="verifyKey()">Verify Key</button>
-                <div id="userResult"></div>
+                <div class="flex">
+                    <input id="userKey" placeholder="Enter your key">
+                    <button onclick="verifyKey()">✅ Verify Key</button>
+                    <button onclick="userLogin()">🔑 Login</button>
+                </div>
+                <div id="userResult" class="result"><pre>Enter a key to verify...</pre></div>
+            </div>
+            
+            <!-- Status -->
+            <div class="box" style="text-align:center; background:#e8f5e9;">
+                <p style="margin:0;">🟢 Server is online | <span id="keyCount">0</span> keys active</p>
             </div>
             
             <script>
+                let adminToken = '';
                 const API_URL = window.location.origin;
                 
                 async function adminLogin() {
@@ -393,9 +455,43 @@ app.get('/', (req, res) => {
                             body: JSON.stringify({ username, password })
                         });
                         const data = await res.json();
-                        result.innerHTML = '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+                        if (data.success) {
+                            adminToken = data.token;
+                            result.innerHTML = '<pre style="color:green;">✅ Login successful! Token: ' + data.token + '</pre>';
+                        } else {
+                            result.innerHTML = '<pre style="color:red;">❌ ' + data.message + '</pre>';
+                        }
                     } catch(e) {
-                        result.innerHTML = '<span class="error">Error: ' + e.message + '</span>';
+                        result.innerHTML = '<pre style="color:red;">❌ Error: ' + e.message + '</pre>';
+                    }
+                }
+                
+                async function generateKey() {
+                    const name = document.getElementById('keyName').value;
+                    const days = document.getElementById('expiryDays').value;
+                    const result = document.getElementById('genResult');
+                    
+                    if (!adminToken) {
+                        result.innerHTML = '<pre style="color:red;">❌ Please login as admin first!</pre>';
+                        return;
+                    }
+                    
+                    try {
+                        const res = await fetch(API_URL + '/api/admin/generate-key', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ adminToken, keyName: name, expiryDays: parseInt(days) || 30 })
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                            result.innerHTML = '<pre style="color:green;">✅ Key generated!\\n' + JSON.stringify(data.key, null, 2) + '</pre>';
+                            document.getElementById('userKey').value = data.key.key;
+                            updateStatus();
+                        } else {
+                            result.innerHTML = '<pre style="color:red;">❌ ' + data.message + '</pre>';
+                        }
+                    } catch(e) {
+                        result.innerHTML = '<pre style="color:red;">❌ Error: ' + e.message + '</pre>';
                     }
                 }
                 
@@ -404,7 +500,7 @@ app.get('/', (req, res) => {
                     const result = document.getElementById('userResult');
                     
                     if (!key) {
-                        result.innerHTML = '<span class="error">Please enter a key</span>';
+                        result.innerHTML = '<pre style="color:red;">❌ Please enter a key</pre>';
                         return;
                     }
                     
@@ -417,9 +513,43 @@ app.get('/', (req, res) => {
                         const data = await res.json();
                         result.innerHTML = '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
                     } catch(e) {
-                        result.innerHTML = '<span class="error">Error: ' + e.message + '</span>';
+                        result.innerHTML = '<pre style="color:red;">❌ Error: ' + e.message + '</pre>';
                     }
                 }
+                
+                async function userLogin() {
+                    const key = document.getElementById('userKey').value;
+                    const result = document.getElementById('userResult');
+                    
+                    if (!key) {
+                        result.innerHTML = '<pre style="color:red;">❌ Please enter a key</pre>';
+                        return;
+                    }
+                    
+                    try {
+                        const res = await fetch(API_URL + '/api/user/login', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ key, username: 'User_' + Math.floor(Math.random()*1000) })
+                        });
+                        const data = await res.json();
+                        result.innerHTML = '<pre>' + JSON.stringify(data, null, 2) + '</pre>';
+                    } catch(e) {
+                        result.innerHTML = '<pre style="color:red;">❌ Error: ' + e.message + '</pre>';
+                    }
+                }
+                
+                async function updateStatus() {
+                    try {
+                        const res = await fetch(API_URL + '/api/keys');
+                        const data = await res.json();
+                        document.getElementById('keyCount').textContent = data.total || 0;
+                    } catch(e) {}
+                }
+                
+                // Update status every 10 seconds
+                updateStatus();
+                setInterval(updateStatus, 10000);
             </script>
         </body>
         </html>
@@ -429,10 +559,5 @@ app.get('/', (req, res) => {
 // Start server
 app.listen(port, () => {
     console.log('✅ Server running on port ' + port);
-    console.log('🌐 Admin Panel: http://localhost:' + port);
-    console.log('🔑 API Endpoints:');
-    console.log('   POST /api/admin/login - Admin login');
-    console.log('   POST /api/admin/generate-key - Generate key');
-    console.log('   POST /api/user/verify - Verify key');
-    console.log('   POST /api/user/login - User login with key');
+    console.log('🔗 http://localhost:' + port);
 });
