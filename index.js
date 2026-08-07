@@ -6,15 +6,6 @@ app.get('/', (req, res) => {
     res.send('🚀 Server is running successfully!');
 });
 
-app.get('/test', (req, res) => {
-    res.json({
-        status: 'success',
-        message: 'Vercel deployment working!',
-        platform: 'Vercel',
-        timestamp: new Date().toISOString()
-    });
-});
-
 app.listen(port, () => {
     console.log('✅ Server running on port ' + port);
 });
