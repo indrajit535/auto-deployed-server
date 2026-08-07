@@ -1,15 +1,12 @@
 {
-    "name": "vercel-auto-deploy",
+    "name": "vercel-server",
     "version": "1.0.0",
-    "description": "Auto deployed server on Vercel from Android App",
+    "description": "Auto deployed server",
     "main": "index.js",
     "scripts": {
         "start": "node index.js"
     },
     "dependencies": {
         "express": "^4.18.2"
-    },
-    "keywords": ["vercel", "auto-deploy", "nodejs", "express"],
-    "author": "indrajit535",
-    "license": "MIT"
+    }
 }
