@@ -11,9 +11,10 @@ app.get('/', (req, res) => {
 app.get('/test', (req, res) => {
     res.json({
         status: 'success',
-        message: 'Server is working!',
+        message: 'Vercel deployment working!',
+        platform: 'Vercel',
         timestamp: new Date().toISOString(),
-        server: 'Auto Deployer App'
+        author: 'indrajit535'
     });
 });
 
@@ -23,12 +24,18 @@ app.get('/status', (req, res) => {
         status: 'online',
         uptime: process.uptime(),
         memory: process.memoryUsage(),
-        node: process.version
+        node: process.version,
+        platform: process.platform
     });
 });
 
-// Start server
-app.listen(port, () => {
-    console.log('✅ Server running on port ' + port);
-    console.log('🌐 Visit: https://auto-deployed-server.onrender.com');
-});
+// Export for Vercel
+module.exports = app;
+
+// For local development
+if (require.main === module) {
+    app.listen(port, () => {
+        console.log('✅ Server running on port ' + port);
+        console.log('🌐 Visit: http://localhost:' + port);
+    });
+}
