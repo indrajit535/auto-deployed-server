@@ -1,12 +1,15 @@
 {
-    "name": "my-server",
+    "name": "auto-deploy-server",
     "version": "1.0.0",
-    "description": "Auto deployed server",
+    "description": "Auto deployed server from Android app",
     "main": "index.js",
     "scripts": {
         "start": "node index.js"
     },
     "dependencies": {
         "express": "^4.18.2"
-    }
+    },
+    "keywords": ["node", "express", "auto-deploy"],
+    "author": "indrajit535",
+    "license": "MIT"
 }
