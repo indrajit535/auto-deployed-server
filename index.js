@@ -6,94 +6,50 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// ✅ Supabase Configuration
 const supabase = createClient(
   "https://jhtuphbiequoyetntvak.supabase.co",
   "sb_publishable_9jUmex1UCcQHVne2CuuF1Q_EbUJ1zMR"
 );
 
-// ✅ Admin Password (Change this to your desired password)
-const ADMIN_PASSWORD = "admin123";
+// ✅ Admin Password Change Kiya - SDD213
+const ADMIN_PASSWORD = "SDD213";
 
-// 👉 Root check
 app.get("/", (req, res) => {
   res.send("Server Running ✅");
 });
 
-// 👉 Auto key generator (16 characters: A-Z, 0-9)
-function generateKey() {
-  const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789';
-  let result = '';
-  for (let i = 0; i < 16; i++) {
-    result += chars.charAt(Math.floor(Math.random() * chars.length));
-  }
-  return result.replace(/(.{4})(?=.)/g, '$1-');
-}
-
-// 👉 Verify Admin Password API
-app.post("/admin/verify", (req, res) => {
+// Generate Key
+app.post("/generate", async (req, res) => {
   try {
-    const { password } = req.body;
-    
-    if (password === ADMIN_PASSWORD) {
-      res.json({ 
-        success: true, 
-        message: "Admin verified successfully" 
-      });
-    } else {
-      res.json({ 
-        success: false, 
-        message: "Invalid admin password" 
-      });
+    const { key, expiry, adminPassword } = req.body;
+
+    if (adminPassword !== ADMIN_PASSWORD) {
+      return res.json({ success: false, error: "Wrong password" });
     }
+
+    const newKey = key;
+
+    const { data, error } = await supabase
+      .from("Sddgamer")
+      .insert([{ 
+        key: newKey, 
+        expiry: expiry || "9999-12-31",
+        status: "active",
+        created_at: new Date().toISOString()
+      }])
+      .select();
+
+    if (error) {
+      return res.json({ success: false, error: error.message });
+    }
+
+    res.json({ success: true, key: newKey, data });
   } catch (err) {
     res.json({ success: false, error: err.message });
   }
 });
 
-// 👉 Generate Key API (Protected by password)
-app.post("/generate", async (req, res) => {
-  try {
-    const { key, expiry, adminPassword } = req.body;
-
-    // Verify admin password
-    if (adminPassword !== ADMIN_PASSWORD) {
-      return res.status(403).json({ 
-        success: false, 
-        error: "Unauthorized: Invalid admin password" 
-      });
-    }
-
-    const newKey = key || generateKey();
-
-    const { data, error } = await supabase
-      .from("Sddgamer")
-      .insert([
-        {
-          key: newKey,
-          expiry: expiry || "9999-12-31",
-          status: "active",
-          created_at: new Date().toISOString()
-        },
-      ])
-      .select();
-
-    if (error) {
-      return res.status(500).json({ success: false, error: error.message });
-    }
-
-    res.json({
-      success: true,
-      key: newKey,
-      message: "Key generated successfully",
-      data,
-    });
-  } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// 👉 Check Key API
+// Check Key
 app.post("/check", async (req, res) => {
   try {
     const { key } = req.body;
@@ -102,49 +58,43 @@ app.post("/check", async (req, res) => {
       .from("Sddgamer")
       .select("*")
       .eq("key", key)
-      .single();
+      .maybeSingle();
 
-    if (error || !data) {
+    if (error) {
+      return res.json({ valid: false, message: "Error" });
+    }
+
+    if (!data) {
       return res.json({ valid: false, message: "Key not found" });
     }
 
-    if (data.status !== "active") {
-      return res.json({ 
-        valid: false, 
-        message: "Key is inactive/expired",
-        data 
-      });
-    }
-
-    // Check expiry
-    if (data.expiry && new Date(data.expiry) < new Date()) {
-      return res.json({ 
-        valid: false, 
-        message: "Key has expired",
-        data 
-      });
-    }
-
-    res.json({
-      valid: true,
-      message: "Key is valid",
-      data,
+    res.json({ 
+      valid: data.status === "active", 
+      message: data.status === "active" ? "Valid key" : "Inactive key",
+      data 
     });
   } catch (err) {
-    res.json({ valid: false, message: "Error checking key" });
+    res.json({ valid: false, message: "Error" });
   }
 });
 
-// 👉 Get All Keys API (Protected)
+// Verify Admin
+app.post("/admin/verify", (req, res) => {
+  const { password } = req.body;
+  if (password === ADMIN_PASSWORD) {
+    res.json({ success: true });
+  } else {
+    res.json({ success: false });
+  }
+});
+
+// Get All Keys
 app.post("/admin/keys", async (req, res) => {
   try {
     const { adminPassword } = req.body;
 
     if (adminPassword !== ADMIN_PASSWORD) {
-      return res.status(403).json({ 
-        success: false, 
-        error: "Unauthorized: Invalid admin password" 
-      });
+      return res.json({ success: false, error: "Wrong password" });
     }
 
     const { data, error } = await supabase
@@ -153,68 +103,69 @@ app.post("/admin/keys", async (req, res) => {
       .order("created_at", { ascending: false });
 
     if (error) {
-      return res.status(500).json({ success: false, error: error.message });
+      return res.json({ success: false, error: error.message });
     }
 
-    res.json({
-      success: true,
-      keys: data,
-      total: data.length
-    });
+    res.json({ success: true, keys: data || [] });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.json({ success: false, error: err.message });
   }
 });
 
-// 👉 Delete Key API (Protected)
+// Delete Key
 app.post("/admin/delete-key", async (req, res) => {
   try {
     const { key, adminPassword } = req.body;
 
     if (adminPassword !== ADMIN_PASSWORD) {
-      return res.status(403).json({ 
-        success: false, 
-        error: "Unauthorized: Invalid admin password" 
-      });
+      return res.json({ success: false, message: "Wrong password" });
     }
 
-    const { data, error } = await supabase
+    if (!key) {
+      return res.json({ success: false, message: "No key provided" });
+    }
+
+    const { data: existingKey, error: findError } = await supabase
+      .from("Sddgamer")
+      .select("*")
+      .eq("key", key)
+      .maybeSingle();
+
+    if (findError) {
+      return res.json({ success: false, message: findError.message });
+    }
+
+    if (!existingKey) {
+      return res.json({ success: false, message: "Key not found" });
+    }
+
+    const { error: deleteError } = await supabase
       .from("Sddgamer")
       .delete()
-      .eq("key", key)
-      .select();
+      .eq("key", key);
 
-    if (error) {
-      return res.status(500).json({ success: false, error: error.message });
+    if (deleteError) {
+      return res.json({ success: false, message: deleteError.message });
     }
 
-    if (data.length === 0) {
-      return res.json({ 
-        success: false, 
-        message: "Key not found" 
-      });
-    }
+    res.json({ success: true, message: "Key deleted successfully" });
 
-    res.json({
-      success: true,
-      message: "Key deleted successfully",
-      deleted: data
-    });
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.json({ success: false, message: err.message });
   }
 });
 
-// 👉 Update Key Status API (Protected)
+// Update Key Status
 app.post("/admin/update-key", async (req, res) => {
   try {
     const { key, status, adminPassword } = req.body;
 
     if (adminPassword !== ADMIN_PASSWORD) {
-      return res.status(403).json({ 
-        success: false, 
-        error: "Unauthorized: Invalid admin password" 
-      });
+      return res.json({ success: false, message: "Wrong password" });
+    }
+
+    if (!key) {
+      return res.json({ success: false, message: "No key provided" });
     }
 
     const { data, error } = await supabase
@@ -224,20 +175,16 @@ app.post("/admin/update-key", async (req, res) => {
       .select();
 
     if (error) {
-      return res.status(500).json({ success: false, error: error.message });
+      return res.json({ success: false, message: error.message });
     }
 
-    res.json({
-      success: true,
-      message: "Key updated successfully",
-      data
-    });
+    res.json({ success: true, message: "Status updated", data });
+
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    res.json({ success: false, message: err.message });
   }
 });
 
-// 👉 Port
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log("Server running on port " + PORT);
